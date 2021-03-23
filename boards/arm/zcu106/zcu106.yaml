@@ -1,0 +1,8 @@
+# Copyright (c) 2020, Antmicro
+identifier: zcu106
+name: ZCU106
+type: mcu
+arch: arm
+toolchain:
+  - zephyr
+  - gnuarmemb
