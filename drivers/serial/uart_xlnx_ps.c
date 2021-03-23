@@ -314,15 +314,31 @@ static int uart_xlnx_ps_init(const struct device *dev)
 
 #ifdef CONFIG_UART_INTERRUPT_DRIVEN
 
-	/* Clear any pending interrupt flags */
-	sys_write32(XUARTPS_IXR_MASK, reg_base + XUARTPS_ISR_OFFSET);
-
 	/* Attach to & unmask the corresponding interrupt vector */
 	dev_cfg->uconf.irq_config_func(dev);
 
 #endif
 
 	xlnx_ps_enable_uart(reg_base);
+
+#ifdef CONFIG_UART_INTERRUPT_DRIVEN
+
+	/* Ensure TX IRQ is asserted by sending
+	*  a dummy NUL output character if necessary.
+	*/
+
+	reg_val = sys_read32(reg_base + XUARTPS_ISR_OFFSET);
+	if ((reg_val & (XUARTPS_IXR_TTRIG | XUARTPS_IXR_TXEMPTY)) == 0) {
+
+		/* Wait for transmitter to be ready to accept a character */
+		do {
+			reg_val = sys_read32(reg_base + XUARTPS_SR_OFFSET);
+		} while ((reg_val & XUARTPS_SR_TXEMPTY) == 0);
+
+		sys_write32('\0', reg_base + XUARTPS_FIFO_OFFSET);
+	}
+
+#endif
 
 	return 0;
 }
@@ -848,6 +864,12 @@ static int uart_xlnx_ps_fifo_fill(const struct device *dev,
 	reg_base = dev_cfg->uconf.regs;
 	reg_val = sys_read32(reg_base + XUARTPS_SR_OFFSET);
 	while (onum < size && (reg_val & XUARTPS_SR_TXFULL) == 0) {
+		if (!onum) {
+			/* acknowledge pending TX IRQ on first FIFO write */
+			sys_write32(
+				(XUARTPS_IXR_TTRIG | XUARTPS_IXR_TXEMPTY),
+				reg_base + XUARTPS_ISR_OFFSET);
+		}
 		sys_write32((uint32_t)(tx_data[onum] & 0xFF),
 				reg_base + XUARTPS_FIFO_OFFSET);
 		onum++;
@@ -941,9 +963,6 @@ static int uart_xlnx_ps_irq_tx_ready(const struct device *dev)
 	if ((reg_val & (XUARTPS_IXR_TTRIG | XUARTPS_IXR_TXEMPTY)) == 0) {
 		return 0;
 	} else {
-		sys_write32(
-			(XUARTPS_IXR_TTRIG | XUARTPS_IXR_TXEMPTY),
-			reg_base + XUARTPS_ISR_OFFSET);
 		return 1;
 	}
 }
