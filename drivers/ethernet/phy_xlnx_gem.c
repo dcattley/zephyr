@@ -7,6 +7,7 @@
  * - Marvell Alaska 88E1510/88E1518/88E1512/88E1514 (Zedboard)
  * - Texas Instruments TLK105
  * - Texas Instruments DP83822
+ * - Texas Instruments DP83867
  *
  * Copyright (c) 2021, Weidmueller Interface GmbH & Co. KG
  * SPDX-License-Identifier: Apache-2.0
@@ -170,6 +171,65 @@ static void phy_xlnx_gem_mdio_write(
 			"register address %hhu timed out",
 			base_addr, phy_addr, reg_addr);
 	}
+}
+
+/* Basic MMD indirect (C45 over C22) read / write functions for PHY access */
+
+/**
+ * @brief Read PHY MMD data via the MDIO interface
+ * Reads MMD data from a PHY attached to the respective GEM's MDIO interface
+ *
+ * @param base_addr Base address of the GEM's register space
+ * @param phy_addr  MDIO address of the PHY to be accessed
+ * @param dev_addr  MMD address of the MMD device to be accessed
+ * @param reg_addr  Index of the PHY register to be read
+ * @return          16-bit data word received from the PHY
+ */
+static uint16_t phy_xlnx_gem_mdio_mmd_read(
+	uint32_t base_addr, uint8_t phy_addr,
+	uint8_t dev_addr, uint16_t reg_addr)
+{
+	uint16_t phy_data = PHY_MMD_CONTROL_FUNCTION_ADDRESS | (dev_addr & PHY_MMD_CONTROL_DEVAD_MASK);
+	phy_xlnx_gem_mdio_write(base_addr, phy_addr, 
+							PHY_MMD_CONTROL_REGISTER, phy_data);
+	phy_xlnx_gem_mdio_write(base_addr, phy_addr, 
+							PHY_MMD_ADDR_DATA_REGISTER, reg_addr);
+
+	phy_data |= PHY_MMD_CONTROL_FUNCTION_DATA_NO_INCREMENT;
+	phy_xlnx_gem_mdio_write(base_addr, phy_addr, 
+							PHY_MMD_CONTROL_REGISTER, phy_data);
+
+	return phy_xlnx_gem_mdio_read(base_addr, phy_addr, 
+								  PHY_MMD_ADDR_DATA_REGISTER);
+}
+
+/**
+ * @brief Writes PHY MMD data via the MDIO interface
+ * Writes MMD data to a PHY attached to the respective GEM's MDIO interface
+ *
+ * @param base_addr Base address of the GEM's register space
+ * @param phy_addr  MDIO address of the PHY to be accessed
+ * @param dev_addr  MMD address of the MMD device to be accessed
+ * @param reg_addr  Index of the PHY register to be written to
+ * @param value     16-bit data word to be written to the target register
+ */
+static void phy_xlnx_gem_mdio_mmd_write(
+	uint32_t base_addr, uint8_t phy_addr,
+	uint8_t dev_addr, uint16_t reg_addr, 
+	uint16_t value)
+{
+	uint16_t phy_data = PHY_MMD_CONTROL_FUNCTION_ADDRESS | (dev_addr & PHY_MMD_CONTROL_DEVAD_MASK);
+	phy_xlnx_gem_mdio_write(base_addr, phy_addr, 
+							PHY_MMD_CONTROL_REGISTER, phy_data);
+	phy_xlnx_gem_mdio_write(base_addr, phy_addr, 
+							PHY_MMD_ADDR_DATA_REGISTER, reg_addr);
+
+	phy_data |= PHY_MMD_CONTROL_FUNCTION_DATA_NO_INCREMENT;
+	phy_xlnx_gem_mdio_write(base_addr, phy_addr, 
+							PHY_MMD_CONTROL_REGISTER, phy_data);
+
+	phy_xlnx_gem_mdio_write(base_addr, phy_addr, 
+							PHY_MMD_ADDR_DATA_REGISTER, value);
 }
 
 /*
@@ -872,6 +932,363 @@ static enum eth_xlnx_link_speed phy_xlnx_gem_ti_dp83822_poll_lspd(
 	return link_speed;
 }
 
+/*
+ * Vendor-specific PHY management functions for:
+ * Texas Instruments DP83867
+ * Register IDs & procedures are based on the corresponding datasheets:
+ * https://www.ti.com/lit/gpn/dp83867e
+ */
+
+/**
+ * @brief TI DP83867 PHY reset function
+ * Reset function for the TI DP83867 PHYs
+ *
+ * @param dev Pointer to the device data
+ */
+static void phy_xlnx_gem_ti_dp83867_reset(const struct device *dev)
+{
+	const struct eth_xlnx_gem_dev_cfg *dev_conf = dev->config;
+	struct eth_xlnx_gem_dev_data *dev_data = dev->data;
+	uint16_t phy_data;
+	uint32_t retries = 0;
+
+	phy_data = phy_xlnx_gem_mdio_read(dev_conf->base_addr, dev_data->phy_addr,
+					  PHY_TI_BASIC_MODE_CONTROL_REGISTER);
+	phy_data |= PHY_TI_BASIC_MODE_CONTROL_RESET_BIT;
+	phy_xlnx_gem_mdio_write(dev_conf->base_addr, dev_data->phy_addr,
+				PHY_TI_BASIC_MODE_CONTROL_REGISTER, phy_data);
+
+	while (((phy_data & PHY_TI_BASIC_MODE_CONTROL_RESET_BIT) != 0) && (retries++ < 10)) {
+		phy_data = phy_xlnx_gem_mdio_read(dev_conf->base_addr, dev_data->phy_addr,
+						  PHY_TI_BASIC_MODE_CONTROL_REGISTER);
+	}
+	if (retries == 10) {
+		LOG_ERR("%s reset PHY address %hhu (TI DP83867) timed out",
+			dev->name, dev_data->phy_addr);
+	}
+}
+
+/**
+ * @brief TI DP83867 PHY software reset function
+ * Software reset function for the TI DP83867 PHYs
+ *
+ * @param dev Pointer to the device data
+ */
+static void phy_xlnx_gem_ti_dp83867_software_reset(const struct device *dev)
+{
+	const struct eth_xlnx_gem_dev_cfg *dev_conf = dev->config;
+	struct eth_xlnx_gem_dev_data *dev_data = dev->data;
+	uint16_t phy_data;
+	uint32_t retries = 0;
+
+	phy_data = PHY_TI_DP83867_CTRL_SW_RESET_BIT;
+	phy_xlnx_gem_mdio_write(dev_conf->base_addr, dev_data->phy_addr,
+				PHY_TI_DP83867_CTRL_REGISTER, phy_data);
+
+	while (((phy_data & PHY_TI_DP83867_CTRL_SW_RESET_BIT) != 0) && (retries++ < 10)) {
+		phy_data = phy_xlnx_gem_mdio_read(dev_conf->base_addr, dev_data->phy_addr,
+						  PHY_TI_DP83867_CTRL_REGISTER);
+	}
+	if (retries == 10) {
+		LOG_ERR("%s software reset PHY address %hhu (TI DP83867) timed out",
+			dev->name, dev_data->phy_addr);
+	}
+}
+
+/**
+ * @brief TI DP83867 PHY software restart function
+ * Software restart function for the TI DP83867 PHYs
+ *
+ * @param dev Pointer to the device data
+ */
+static void phy_xlnx_gem_ti_dp83867_software_restart(const struct device *dev)
+{
+	const struct eth_xlnx_gem_dev_cfg *dev_conf = dev->config;
+	struct eth_xlnx_gem_dev_data *dev_data = dev->data;
+	uint16_t phy_data;
+	uint32_t retries = 0;
+
+	phy_data = PHY_TI_DP83867_CTRL_SW_RESTART_BIT;
+	phy_xlnx_gem_mdio_write(dev_conf->base_addr, dev_data->phy_addr,
+				PHY_TI_DP83867_CTRL_REGISTER, phy_data);
+
+	while (((phy_data & PHY_TI_DP83867_CTRL_SW_RESTART_BIT) != 0) && (retries++ < 10)) {
+		phy_data = phy_xlnx_gem_mdio_read(dev_conf->base_addr, dev_data->phy_addr,
+						  PHY_TI_DP83867_CTRL_REGISTER);
+	}
+	if (retries == 10) {
+		LOG_ERR("%s software restart PHY address %hhu (TI DP83867) timed out",
+			dev->name, dev_data->phy_addr);
+	}
+}
+
+/**
+ * @brief TI DP83867 PHY configuration function
+ * Configuration function for the TI DP83867 PHYs
+ *
+ * @param dev Pointer to the device data
+ */
+static void phy_xlnx_gem_ti_dp83867_cfg(const struct device *dev)
+{
+	const struct eth_xlnx_gem_dev_cfg *dev_conf = dev->config;
+	struct eth_xlnx_gem_dev_data *dev_data = dev->data;
+	uint16_t phy_data;
+	uint16_t phy_data_gbit;
+
+	phy_xlnx_gem_ti_dp83867_software_reset(dev);
+
+	/*
+	 * Clear ANEG enable until ANEG configuration is completed
+	 */
+	phy_data = phy_xlnx_gem_mdio_read(dev_conf->base_addr, dev_data->phy_addr,
+				PHY_TI_BASIC_MODE_CONTROL_REGISTER);
+	phy_data &= ~PHY_TI_BASIC_MODE_CONTROL_AUTONEG_ENABLE_BIT;
+	phy_xlnx_gem_mdio_write(dev_conf->base_addr, dev_data->phy_addr,
+				PHY_TI_BASIC_MODE_CONTROL_REGISTER, phy_data);
+
+	phy_xlnx_gem_ti_dp83867_reset(dev);
+
+	/*
+	 * Disable SGMII mode
+	 * Set FIFO depth(s)
+	 * Enable AUTO MDI
+	 */
+	phy_data = PHY_TI_DP83867_PHYCR_TX_FIFO_DEPTH_4 | PHY_TI_DP83867_PHYCR_RX_FIFO_DEPTH_4;
+	phy_data |= PHY_TI_DP83867_PHYCR_MDI_CROSSOVER_AUTO_BIT;
+	phy_xlnx_gem_mdio_write(dev_conf->base_addr, dev_data->phy_addr,
+				PHY_TI_DP83867_PHYCR_REGISTER, phy_data);
+	
+	/*
+	 * Setup RGMII clock delay
+	 */
+	phy_data = PHY_TI_DP83867_RGMIIDCTL_RGMII_TX_DELAY_CTRL_2_75_NS;
+	phy_data |= PHY_TI_DP83867_RGMIIDCTL_RGMII_RX_DELAY_CTRL_2_25_NS;
+	phy_xlnx_gem_mdio_mmd_write(dev_conf->base_addr, dev_data->phy_addr,
+				PHY_TI_VENDOR_SPECIFIC_DEVADR, PHY_TI_DP83867_RGMIIDCTL_REGADDR,
+				phy_data);
+
+	/*
+	 * Enable RGMII mode and 
+	 */
+	phy_data = PHY_TI_DP83867_RGMIICTL_RGMII_EN_BIT;
+	phy_data |= PHY_TI_DP83867_RGMIICTL_RX_HALF_FULL_THR_2 | PHY_TI_DP83867_RGMIICTL_TX_HALF_FULL_THR_2;
+	phy_data |= PHY_TI_DP83867_RGMIICTL_RGMII_TX_CLK_DELAY_BIT | PHY_TI_DP83867_RGMIICTL_RGMII_RX_CLK_DELAY_BIT;
+	phy_xlnx_gem_mdio_mmd_write(dev_conf->base_addr, dev_data->phy_addr,
+				PHY_TI_VENDOR_SPECIFIC_DEVADR, PHY_TI_DP83867_RGMIICTL_REGADDR,
+				phy_data);
+
+	/*
+	 * Reset the PHY
+	 */
+//	phy_xlnx_gem_ti_dp83867_reset(dev);
+
+	/*
+	 * SW workaround for unstable link when RX_CTRL is not STRAP MODE 3 or 4
+	 */
+	phy_data = phy_xlnx_gem_mdio_mmd_read(dev_conf->base_addr, dev_data->phy_addr,
+				PHY_TI_VENDOR_SPECIFIC_DEVADR, PHY_TI_DP83867_CFG4_REGADDR);
+	phy_data &= ~PHY_TI_DP83867_CFG4_RESVD7_BIT;
+	phy_xlnx_gem_mdio_mmd_write(dev_conf->base_addr, dev_data->phy_addr,
+				PHY_TI_VENDOR_SPECIFIC_DEVADR, PHY_TI_DP83867_RGMIICTL_REGADDR,
+				phy_data);
+	
+	phy_data = PHY_TI_ADV_ASM_DIR_BIT;
+	phy_data |= PHY_TI_ADV_PAUSE_BIT;
+
+	/*
+	 * Clear the 1 GBit/s FDX/HDX advertisement bits from reg. CFG1 current
+	 * contents in case we're going to advertise anything below 1 GBit/s
+	 * as maximum / nominal link speed.
+	 */
+	phy_data_gbit = phy_xlnx_gem_mdio_read(dev_conf->base_addr, dev_data->phy_addr,
+					       PHY_TI_DP83867_CFG1_REGISTER);
+	phy_data_gbit &= ~PHY_TI_DP83867_CFG1_1000BASET_FDX_BIT;
+	phy_data_gbit &= ~PHY_TI_DP83867_CFG1_1000BASET_HDX_BIT;
+
+	phy_data |= PHY_TI_ADV_SELECTOR_802_3;
+
+	if (dev_conf->enable_fdx) {
+		if (dev_conf->max_link_speed == LINK_1GBIT) {
+			/* Advertise 1 GBit/s, full duplex */
+			phy_data_gbit |= PHY_TI_DP83867_CFG1_1000BASET_FDX_BIT;
+			if (dev_conf->phy_advertise_lower) {
+				/* + 100 MBit/s, full duplex */
+				phy_data |= PHY_TI_ADV_100BASET_FDX_BIT;
+				/* + 10 MBit/s, full duplex */
+				phy_data |= PHY_TI_ADV_10BASET_FDX_BIT;
+			}
+		} else if (dev_conf->max_link_speed == LINK_100MBIT) {
+			/* Advertise 100 MBit/s, full duplex */
+			phy_data |= PHY_TI_ADV_100BASET_FDX_BIT;
+			if (dev_conf->phy_advertise_lower) {
+				/* + 10 MBit/s, full duplex */
+				phy_data |= PHY_TI_ADV_10BASET_FDX_BIT;
+			}
+		} else if (dev_conf->max_link_speed == LINK_10MBIT) {
+			/* Advertise 10 MBit/s, full duplex */
+			phy_data |= PHY_TI_ADV_10BASET_FDX_BIT;
+		}
+	} else {
+		if (dev_conf->max_link_speed == LINK_1GBIT) {
+			/* Advertise 1 GBit/s, half duplex */
+			phy_data_gbit = PHY_TI_DP83867_CFG1_1000BASET_HDX_BIT;
+			if (dev_conf->phy_advertise_lower) {
+				/* + 100 MBit/s, half duplex */
+				phy_data |= PHY_TI_ADV_100BASET_HDX_BIT;
+				/* + 10 MBit/s, half duplex */
+				phy_data |= PHY_TI_ADV_10BASET_HDX_BIT;
+			}
+		} else if (dev_conf->max_link_speed == LINK_100MBIT) {
+			/* Advertise 100 MBit/s, half duplex */
+			phy_data |= PHY_TI_ADV_100BASET_HDX_BIT;
+			if (dev_conf->phy_advertise_lower) {
+				/* + 10 MBit/s, half duplex */
+				phy_data |= PHY_TI_ADV_10BASET_HDX_BIT;
+			}
+		} else if (dev_conf->max_link_speed == LINK_10MBIT) {
+			/* Advertise 10 MBit/s, half duplex */
+			phy_data |= PHY_TI_ADV_10BASET_HDX_BIT;
+		}
+	}
+
+	phy_xlnx_gem_mdio_write(dev_conf->base_addr, dev_data->phy_addr,
+				PHY_TI_CONTROL_REGISTER_1, phy_data_gbit);
+	phy_xlnx_gem_mdio_write(dev_conf->base_addr, dev_data->phy_addr,
+				PHY_TI_AUTONEG_ADV_REGISTER, phy_data);
+
+	/*
+	 * Reset the PHY
+	 */
+//	phy_xlnx_gem_ti_dp83867_reset(dev);
+
+	/*
+	 * Enable ANEG
+	 */
+	phy_data = phy_xlnx_gem_mdio_read(dev_conf->base_addr, dev_data->phy_addr,
+					  PHY_TI_BASIC_MODE_CONTROL_REGISTER);
+	phy_data |= PHY_TI_BASIC_MODE_CONTROL_AUTONEG_ENABLE_BIT;
+	phy_data |= PHY_TI_BASIC_MODE_CONTROL_AUTONEG_RESTART_BIT;
+	phy_xlnx_gem_mdio_write(dev_conf->base_addr, dev_data->phy_addr,
+				PHY_TI_BASIC_MODE_CONTROL_REGISTER, phy_data);
+
+	/*
+	 * Set the link speed to 'link down' for now, once auto-negotiation
+	 * is complete, the result will be handled by the system work queue.
+	 */
+	dev_data->eff_link_speed = LINK_DOWN;
+}
+
+/**
+ * @brief TI DP83867 PHY status change polling function
+ * Status change polling function for the TI DP83867 PHYs
+ *
+ * @param dev Pointer to the device data
+ * @return A set of bits indicating whether one or more of the following
+ *         events has occurred: auto-negotiation completed, link state
+ *         changed, link speed changed.
+ */
+static uint16_t phy_xlnx_gem_ti_dp83867_poll_sc(const struct device *dev)
+{
+	const struct eth_xlnx_gem_dev_cfg *dev_conf = dev->config;
+	struct eth_xlnx_gem_dev_data *dev_data = dev->data;
+	uint16_t phy_data;
+	uint16_t phy_status = 0;
+
+	/*
+	 * The relevant status bits are obtained from the Interrupt
+	 * Status Register. 
+	 */
+	phy_data = phy_xlnx_gem_mdio_read(dev_conf->base_addr, dev_data->phy_addr,
+					  PHY_TI_DP83867_ISR_REGISTER);
+
+	if ((phy_data & PHY_TI_DP83867_ISR_REGISTER_AUTONEG_COMP_INT_BIT) != 0) {
+		phy_status |= PHY_XLNX_GEM_EVENT_AUTONEG_COMPLETE;
+	}
+	if ((phy_data & PHY_TI_DP83867_ISR_REGISTER_DUPLEX_MODE_CHNG_INT_BIT) != 0) {
+		phy_status |= PHY_XLNX_GEM_EVENT_LINK_STATE_CHANGED;
+	}
+	if ((phy_data & PHY_TI_DP83867_ISR_REGISTER_LINK_STATUS_CHNG_INT_BIT) != 0) {
+		phy_status |= PHY_XLNX_GEM_EVENT_LINK_STATE_CHANGED;
+	}
+	if ((phy_data & PHY_TI_DP83867_ISR_REGISTER_SPEED_CHNG_INT_BIT) != 0) {
+		phy_status |= PHY_XLNX_GEM_EVENT_LINK_SPEED_CHANGED;
+	}
+
+	return phy_status;
+}
+
+/**
+ * @brief TI DP83867 PHY link status polling function
+ * Link status polling function for the TI DP83867 PHYs
+ *
+ * @param dev Pointer to the device data
+ * @return 1 if the PHY indicates link up, 0 if the link is down
+ */
+static uint8_t phy_xlnx_gem_ti_dp83867_poll_lsts(const struct device *dev)
+{
+	const struct eth_xlnx_gem_dev_cfg *dev_conf = dev->config;
+	struct eth_xlnx_gem_dev_data *dev_data = dev->data;
+	uint16_t phy_data;
+
+	/*
+	 * Double read of the BMSR is intentional - the relevant bit is latched
+	 * low so that after a link down -> link up transition, the first read
+	 * of the BMSR will still return the latched link down status rather
+	 * than the current status.
+	 */
+	phy_data = phy_xlnx_gem_mdio_read(dev_conf->base_addr, dev_data->phy_addr,
+					  PHY_TI_BASIC_MODE_STATUS_REGISTER);
+	phy_data = phy_xlnx_gem_mdio_read(dev_conf->base_addr, dev_data->phy_addr,
+					  PHY_TI_BASIC_MODE_STATUS_REGISTER);
+
+	return ((phy_data & PHY_TI_BASIC_MODE_STATUS_LINK_STATUS_BIT) != 0);
+}
+
+/**
+ * @brief TI DP83867 PHY link speed polling function
+ * Link speed polling function for the TI DP83867 PHYs
+ *
+ * @param dev Pointer to the device data
+ * @return    Enum containing the current link speed reported by the PHY
+ */
+static enum eth_xlnx_link_speed phy_xlnx_gem_ti_dp83867_poll_lspd(
+	const struct device *dev)
+{
+	const struct eth_xlnx_gem_dev_cfg *dev_conf = dev->config;
+	struct eth_xlnx_gem_dev_data *dev_data = dev->data;
+	enum eth_xlnx_link_speed link_speed;
+	uint16_t phy_data;
+
+	phy_data = phy_xlnx_gem_mdio_read(dev_conf->base_addr, dev_data->phy_addr,
+					  PHY_TI_DP83867_PHYSTS_REGISTER);
+
+	/* PHYSCR[0] is the link established indication bit */
+	if ((phy_data & PHY_TI_DP83867_PHYSTS_SPEED_LINK_STATUS_BIT) != 0 &&
+	    (phy_data & PHY_TI_DP83867_PHYSTS_SPEED_DUPLEX_RESOLVED_BIT) != 0 ) {
+		switch (phy_data & PHY_TI_DP83867_PHYSTS_SPEED_SELECTION_MASK) {
+			case PHY_TI_DP83867_PHYSTS_SPEED_SELECTION_1G:
+				link_speed = LINK_1GBIT;
+			break;
+
+			case PHY_TI_DP83867_PHYSTS_SPEED_SELECTION_100M:
+				link_speed = LINK_100MBIT;
+			break;
+
+			case PHY_TI_DP83867_PHYSTS_SPEED_SELECTION_10M:
+				link_speed = LINK_10MBIT;
+			break;
+
+			default:
+				link_speed = LINK_DOWN;
+			break;
+		}
+	} else {
+		link_speed = LINK_DOWN;
+	}
+
+	return link_speed;
+}
+
 /**
  * @brief Marvell Alaska PHY function pointer table
  * Function pointer table for the Marvell Alaska PHY series
@@ -896,6 +1313,19 @@ static struct phy_xlnx_gem_api phy_xlnx_gem_ti_dp83822_api = {
 	.phy_poll_status_change_func = phy_xlnx_gem_ti_dp83822_poll_sc,
 	.phy_poll_link_status_func   = phy_xlnx_gem_ti_dp83822_poll_lsts,
 	.phy_poll_link_speed_func    = phy_xlnx_gem_ti_dp83822_poll_lspd
+};
+
+/**
+ * @brief Texas Instruments DP83867 PHY function pointer table
+ * Function pointer table for the Texas Instruments DP83867 PHY
+ * series specific management functions
+ */
+static struct phy_xlnx_gem_api phy_xlnx_gem_ti_dp83867_api = {
+	.phy_reset_func              = phy_xlnx_gem_ti_dp83867_reset,
+	.phy_configure_func          = phy_xlnx_gem_ti_dp83867_cfg,
+	.phy_poll_status_change_func = phy_xlnx_gem_ti_dp83867_poll_sc,
+	.phy_poll_link_status_func   = phy_xlnx_gem_ti_dp83867_poll_lsts,
+	.phy_poll_link_speed_func    = phy_xlnx_gem_ti_dp83867_poll_lspd
 };
 
 /*
@@ -942,7 +1372,13 @@ static struct phy_xlnx_gem_supported_dev phy_xlnx_gem_supported_devs[] = {
 		.phy_id_mask = PHY_TI_PHY_ID_MODEL_MASK,
 		.api         = &phy_xlnx_gem_ti_dp83822_api,
 		.identifier  = "Texas Instruments TLK105"
-	}
+	},
+	{
+		.phy_id      = PHY_TI_PHY_ID_MODEL_DP83867,
+		.phy_id_mask = PHY_TI_PHY_ID_MODEL_MASK,
+		.api         = &phy_xlnx_gem_ti_dp83867_api,
+		.identifier  = "Texas Instruments DP83867"
+	},
 };
 
 /**
