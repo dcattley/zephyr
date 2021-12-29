@@ -1249,6 +1249,16 @@ static void eth_xlnx_gem_poll_phy(struct k_work *work)
 	}
 }
 
+static uint32_t inline eth_xlnx_gem_map_dma_addr(uint32_t addr)
+{
+#if defined(CONFIG_CPU_CORTEX_R)
+	if (addr < 0x00040000) {
+		addr |= 0xFFE00000;
+	}
+#endif
+
+	return addr;
+}
 /**
  * @brief GEM DMA memory area setup function
  * Sets up the DMA memory area to be used by the current GEM device.
@@ -1278,7 +1288,7 @@ static void eth_xlnx_gem_configure_buffers(const struct device *dev)
 	for (buf_iter = 0; buf_iter < (dev_conf->rxbd_count - 1); buf_iter++) {
 		/* Clear 'used' bit -> BD is owned by the controller */
 		bdptr->ctrl = 0;
-		bdptr->addr = (uint32_t)dev_data->first_rx_buffer +
+		bdptr->addr = eth_xlnx_gem_map_dma_addr((uint32_t)dev_data->first_rx_buffer) +
 			      (buf_iter * (uint32_t)dev_conf->rx_buffer_size);
 		++bdptr;
 	}
@@ -1292,7 +1302,7 @@ static void eth_xlnx_gem_configure_buffers(const struct device *dev)
 	 * bit is located in the BD's control word!
 	 */
 	bdptr->ctrl = 0; /* BD is owned by the controller */
-	bdptr->addr = ((uint32_t)dev_data->first_rx_buffer +
+	bdptr->addr = (eth_xlnx_gem_map_dma_addr((uint32_t)dev_data->first_rx_buffer) +
 		      (buf_iter * (uint32_t)dev_conf->rx_buffer_size)) |
 		      ETH_XLNX_GEM_RXBD_WRAP_BIT;
 	
@@ -1311,7 +1321,7 @@ static void eth_xlnx_gem_configure_buffers(const struct device *dev)
 	for (buf_iter = 0; buf_iter < (dev_conf->txbd_count - 1); buf_iter++) {
 		/* Set up the control word -> 'used' flag must be set. */
 		bdptr->ctrl = ETH_XLNX_GEM_TXBD_USED_BIT;
-		bdptr->addr = (uint32_t)dev_data->first_tx_buffer +
+		bdptr->addr = eth_xlnx_gem_map_dma_addr((uint32_t)dev_data->first_tx_buffer) +
 			      (buf_iter * (uint32_t)dev_conf->tx_buffer_size);
 		++bdptr;
 	}
@@ -1323,7 +1333,7 @@ static void eth_xlnx_gem_configure_buffers(const struct device *dev)
 	 * instead
 	 */
 	bdptr->ctrl = (ETH_XLNX_GEM_TXBD_WRAP_BIT | ETH_XLNX_GEM_TXBD_USED_BIT);
-	bdptr->addr = (uint32_t)dev_data->first_tx_buffer +
+	bdptr->addr = eth_xlnx_gem_map_dma_addr((uint32_t)dev_data->first_tx_buffer) +
 		      (buf_iter * (uint32_t)dev_conf->tx_buffer_size);
 
 	/* set the 'extra' BD to terminate */
@@ -1348,9 +1358,9 @@ static void eth_xlnx_gem_configure_buffers(const struct device *dev)
 	}
 
 	/* Write pointers to the first RX/TX BD to the controller */
-	sys_write32((uint32_t)dev_data->rxbd_ring.first_bd,
+	sys_write32(eth_xlnx_gem_map_dma_addr((uint32_t)dev_data->rxbd_ring.first_bd),
 		    dev_conf->base_addr + ETH_XLNX_GEM_RXQBASE_OFFSET);
-	sys_write32((uint32_t)dev_data->txbd_ring.first_bd,
+	sys_write32(eth_xlnx_gem_map_dma_addr((uint32_t)dev_data->txbd_ring.first_bd),
 		    dev_conf->base_addr + ETH_XLNX_GEM_TXQBASE_OFFSET);
 }
 
