@@ -1,0 +1,20 @@
+#
+# Copyright (c) 2018, Diego Sueiro
+# Copyright (c) 2021, Weidmueller Interface GmbH & Co. KG
+#
+# SPDX-License-Identifier: Apache-2.0
+#
+
+identifier: xlnx_zc706
+name: Xilinx ZC706
+type: mcu
+arch: arm
+ram: 2048
+flash: 4096
+toolchain:
+  - zephyr
+  - gnuarmemb
+  - xtools
+supported:
+  - net
+  - netif:eth
