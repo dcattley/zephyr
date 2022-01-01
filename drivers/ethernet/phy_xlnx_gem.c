@@ -298,12 +298,68 @@ static void phy_xlnx_gem_marvell_alaska_cfg(const struct device *dev)
 			PHY_MRVL_COPPER_PAGE_SWITCH_REGISTER,
 			PHY_MRVL_BASE_REGISTERS_PAGE);
 	}
+	else if ((dev_data->phy_id & PHY_MRVL_PHY_ID_MODEL_MASK) ==
+		PHY_MRVL_PHY_ID_MODEL_88E1116) {
+		/*
+		 * 88E1116 only: configure RGMII timing delay and apply other Xilinx
+		 *               settings from the LWiP / baremetal port (necessary?)
+		 */
+
+		/* Xilinx LwIP GEM support sets Asymmetric Pause. */
+		phy_data = phy_xlnx_gem_mdio_read(dev_conf->base_addr, dev_data->phy_addr, PHY_MRVL_COPPER_AUTONEG_ADV_REGISTER);
+		phy_data |= PHY_MRVL_ADV_ASYMMETRIC_PAUSE_BIT;
+		phy_data |= PHY_MRVL_ADV_PAUSE_BIT;
+		phy_xlnx_gem_mdio_write(dev_conf->base_addr, dev_data->phy_addr, PHY_MRVL_COPPER_AUTONEG_ADV_REGISTER, phy_data);
+
+		/* Xilinx LwIP GEM support enabled Downshift . */
+		phy_data = phy_xlnx_gem_mdio_read(dev_conf->base_addr, dev_data->phy_addr, PHY_MRVL_COPPER_CONTROL_1_REGISTER);
+		phy_data |= PHY_MRVL_DOWNSHIFT_COUNTER_8X;
+		phy_data |= PHY_MRVL_DOWNSHIFT_ENABLE_BIT;
+		phy_xlnx_gem_mdio_write(dev_conf->base_addr, dev_data->phy_addr, PHY_MRVL_COPPER_CONTROL_1_REGISTER, phy_data);
+
+		/* Configure RGMII timing delay */
+		phy_xlnx_gem_mdio_write(dev_conf->base_addr, dev_data->phy_addr, PHY_MRVL_COPPER_PAGE_SWITCH_REGISTER, PHY_MRVL_MAC_REGISTERS_PAGE);
+
+		phy_data = phy_xlnx_gem_mdio_read(dev_conf->base_addr, dev_data->phy_addr, PHY_MRVL_MAC_CONTROL_REGISTER);
+		phy_data |= PHY_MRVL_MAC_RGMII_RX_TIMING_CONTROL_BIT;
+		phy_data |= PHY_MRVL_MAC_RGMII_TX_TIMING_CONTROL_BIT;
+		phy_xlnx_gem_mdio_write(dev_conf->base_addr, dev_data->phy_addr, PHY_MRVL_MAC_CONTROL_REGISTER, phy_data);
+
+		/*
+		 * [15] Mode Software Reset bit, affecting pages 6 and 18
+		 * Reset is performed immediately, bit [15] is self-clearing.
+		 * This reset bit is not to be confused with the actual PHY
+		 * reset in register 0/0!
+		 */
+		phy_data |= PHY_MRVL_GENERAL_CONTROL_1_RESET_BIT;
+		phy_xlnx_gem_mdio_write(dev_conf->base_addr, dev_data->phy_addr,
+					PHY_MRVL_GENERAL_CONTROL_1_REGISTER, phy_data);
+
+		/* Bit [15] reverts to 0 once the reset is complete. */
+		while (((phy_data & PHY_MRVL_GENERAL_CONTROL_1_RESET_BIT) != 0) &&
+				(retries++ < 10)) {
+			phy_data = phy_xlnx_gem_mdio_read(dev_conf->base_addr,
+				dev_data->phy_addr,
+				PHY_MRVL_GENERAL_CONTROL_1_REGISTER);
+		}
+		if (retries == 10) {
+			LOG_ERR("%s configure PHY address %hhu (Marvell Alaska) timed out",
+				dev->name, dev_data->phy_addr);
+			return;
+		}
+
+		/* Revert to register page 0 */
+		phy_xlnx_gem_mdio_write(dev_conf->base_addr, dev_data->phy_addr,
+			PHY_MRVL_COPPER_PAGE_SWITCH_REGISTER,
+			PHY_MRVL_BASE_REGISTERS_PAGE);
+	}
 
 	/*
 	 * Configure MDIX
 	 * TODO: Make this value configurable via KConfig or DT?
 	 * 88E151x: Page 0, register address 16 = Copper specific control register 1,
 	 * 88E1111: Page any, register address 16 = PHY specific control register,
+	 * 88E1116: Page 0, register address 16 = Coppler specific control register 1,
 	 * bits [6..5] = MDIO crossover mode. Comp. datasheet table 76.
 	 * NOTICE: a change of this value requires a subsequent software
 	 * reset command via Copper Control Register's bit [15].
@@ -319,7 +375,7 @@ static void phy_xlnx_gem_marvell_alaska_cfg(const struct device *dev)
 
 	/*
 	 * Configure the Copper Specific Interrupt Enable Register
-	 * (88E151x) / Interrupt Enable Register (88E1111).
+	 * (88E151x & 88E1116) / Interrupt Enable Register (88E1111).
 	 * The interrupt status register provides a convenient way to
 	 * detect relevant state changes, also, PHY management could
 	 * eventually be changed from polling to interrupt-driven.
@@ -382,15 +438,19 @@ static void phy_xlnx_gem_marvell_alaska_cfg(const struct device *dev)
 	 */
 
 	/*
-	 * 88E151x only:
+	 * 88E151x / 88E1116 only:
 	 * Register 4, bits [4..0] = Selector field, 00001 = 802.3. Those bits
 	 * are reserved in other Marvell PHYs.
 	 */
-	if ((dev_data->phy_id & PHY_MRVL_PHY_ID_MODEL_MASK) ==
-			PHY_MRVL_PHY_ID_MODEL_88E151X) {
+	switch (dev_data->phy_id & PHY_MRVL_PHY_ID_MODEL_MASK) {
+	case PHY_MRVL_PHY_ID_MODEL_88E151X:
+	case PHY_MRVL_PHY_ID_MODEL_88E1116:
 		phy_data = PHY_MRVL_ADV_SELECTOR_802_3;
-	} else {
+		break;
+
+	default:
 		phy_data = 0x0000;
+		break;
 	}
 
 	/*
@@ -858,6 +918,12 @@ static struct phy_xlnx_gem_supported_dev phy_xlnx_gem_supported_devs[] = {
 		.phy_id_mask = PHY_MRVL_PHY_ID_MODEL_MASK,
 		.api         = &phy_xlnx_gem_marvell_alaska_api,
 		.identifier  = "Marvell Alaska 88E1111"
+	},
+	{
+		.phy_id      = PHY_MRVL_PHY_ID_MODEL_88E1116,
+		.phy_id_mask = PHY_MRVL_PHY_ID_MODEL_MASK,
+		.api         = &phy_xlnx_gem_marvell_alaska_api,
+		.identifier  = "Marvell Alaska 88E1116"
 	},
 	{
 		.phy_id      = PHY_MRVL_PHY_ID_MODEL_88E151X,
