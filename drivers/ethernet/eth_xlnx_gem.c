@@ -1295,6 +1295,11 @@ static void eth_xlnx_gem_configure_buffers(const struct device *dev)
 	bdptr->addr = ((uint32_t)dev_data->first_rx_buffer +
 		      (buf_iter * (uint32_t)dev_conf->rx_buffer_size)) |
 		      ETH_XLNX_GEM_RXBD_WRAP_BIT;
+	
+	/* set the 'extra' BD to terminate */
+	++bdptr;
+	bdptr->ctrl = 0;
+	bdptr->addr = ETH_XLNX_GEM_RXBD_WRAP_BIT | ETH_XLNX_GEM_RXBD_USED_BIT;
 
 	/*
 	 * Set initial TX BD data -> comp. Zynq-7000 TRM, Chapter 16.3.5,
@@ -1321,6 +1326,11 @@ static void eth_xlnx_gem_configure_buffers(const struct device *dev)
 	bdptr->addr = (uint32_t)dev_data->first_tx_buffer +
 		      (buf_iter * (uint32_t)dev_conf->tx_buffer_size);
 
+	/* set the 'extra' BD to terminate */
+	++bdptr;
+	bdptr->ctrl = ETH_XLNX_GEM_TXBD_WRAP_BIT | ETH_XLNX_GEM_TXBD_USED_BIT;
+	bdptr->addr = 0;
+
 	/* Set free count/current index in the RX/TX BD ring data */
 	dev_data->rxbd_ring.next_to_process = 0;
 	dev_data->rxbd_ring.next_to_use     = 0;
@@ -1328,6 +1338,14 @@ static void eth_xlnx_gem_configure_buffers(const struct device *dev)
 	dev_data->txbd_ring.next_to_process = 0;
 	dev_data->txbd_ring.next_to_use     = 0;
 	dev_data->txbd_ring.free_bds        = dev_conf->txbd_count;
+
+	if (((sys_read32(dev_conf->base_addr + 0xFC) >> 16) & 0xFFF) > 2) {
+		/* Write pointers to the terminating RX/TX BD to the controller */
+		sys_write32(eth_xlnx_gem_map_dma_addr((uint32_t)&dev_data->rxbd_ring.first_bd[dev_conf->rxbd_count]),
+				dev_conf->base_addr + ETH_XLNX_GEM_RXQ1BASE_OFFSET);
+		sys_write32(eth_xlnx_gem_map_dma_addr((uint32_t)&dev_data->txbd_ring.first_bd[dev_conf->txbd_count]),
+				dev_conf->base_addr + ETH_XLNX_GEM_TXQ1BASE_OFFSET);
+	}
 
 	/* Write pointers to the first RX/TX BD to the controller */
 	sys_write32((uint32_t)dev_data->rxbd_ring.first_bd,

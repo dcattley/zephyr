@@ -200,6 +200,10 @@
 #define ETH_XLNX_GEM_LADDR4L_OFFSET			0x000000A0
 #define ETH_XLNX_GEM_LADDR4H_OFFSET			0x000000A4
 
+#define ETH_XLNX_GEM_TXQ1BASE_OFFSET		0x00000440
+#define ETH_XLNX_GEM_RXQ1BASE_OFFSET		0x00000480
+
+
 /*
  * Masks for clearing registers during initialization:
  * gem.net_ctrl  [clear_stat_regs]
@@ -497,8 +501,8 @@ static struct eth_xlnx_gem_dev_data eth_xlnx_gem##port##_dev_data = {\
 /* DMA memory area declaration macro */
 #define ETH_XLNX_GEM_DMA_AREA_DECL(port) \
 struct eth_xlnx_dma_area_gem##port {\
-	struct eth_xlnx_gem_bd rx_bd[DT_INST_PROP(port, rx_buffer_descriptors)];\
-	struct eth_xlnx_gem_bd tx_bd[DT_INST_PROP(port, tx_buffer_descriptors)];\
+	struct eth_xlnx_gem_bd rx_bd[DT_INST_PROP(port, rx_buffer_descriptors) + 1];\
+	struct eth_xlnx_gem_bd tx_bd[DT_INST_PROP(port, tx_buffer_descriptors) + 1];\
 	uint8_t rx_buffer\
 		[DT_INST_PROP(port, rx_buffer_descriptors)]\
 		[((DT_INST_PROP(port, rx_buffer_size)\
