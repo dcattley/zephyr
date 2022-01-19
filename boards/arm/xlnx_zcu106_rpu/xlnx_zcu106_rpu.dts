@@ -64,4 +64,5 @@
 	local-mac-address = [00 0A 35 00 01 02];
 	/* init-mdio-phy; */
 	advertise-lower-link-speeds;
+	/* test-local-loopback; */
  };
