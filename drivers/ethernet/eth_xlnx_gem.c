@@ -201,6 +201,15 @@ static int eth_xlnx_gem_dev_init(const struct device *dev)
 			    ETH_XLNX_GEM_NWCTRL_OFFSET);
 	}
 
+	/* Enable loopback (test) */
+	if (dev_conf->test_local_loopback) {
+		reg_val  = sys_read32(dev_conf->base_addr +
+				      ETH_XLNX_GEM_NWCTRL_OFFSET);
+		reg_val |= ETH_XLNX_GEM_NWCTRL_LOOPEN_BIT;
+		sys_write32(reg_val, dev_conf->base_addr +
+			    ETH_XLNX_GEM_NWCTRL_OFFSET);
+	}
+
 	eth_xlnx_gem_configure_clocks(dev);	/* Chapter 16.3.3 */
 	if (dev_conf->init_phy) {
 		eth_xlnx_gem_init_phy(dev);	/* Chapter 16.3.4 */
@@ -914,7 +923,7 @@ static void eth_xlnx_gem_set_initial_nwcfg(const struct device *dev)
 		/* [13]     Enable pause TX */
 		reg_val |= ETH_XLNX_GEM_NWCFG_PAUSEEN_BIT;
 	}
-	if (dev_conf->enable_tbi) {
+	if (dev_conf->enable_tbi && !dev_conf->test_local_loopback) {
 		/* [11]     enable TBI instead of GMII/MII */
 		reg_val |= ETH_XLNX_GEM_NWCFG_TBIINSTEAD_BIT;
 	}

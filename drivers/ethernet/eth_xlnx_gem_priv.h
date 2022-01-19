@@ -482,7 +482,8 @@ static const struct eth_xlnx_gem_dev_cfg eth_xlnx_gem##port##_dev_cfg = {\
 	.enable_tx_chksum_offload	= DT_INST_PROP(port, tx_checksum_offload),\
 	.tx_buffer_size_full		= DT_INST_PROP(port, hw_tx_buffer_size_full),\
 	.enable_ahb_packet_endian_swap	= DT_INST_PROP(port, ahb_packet_endian_swap),\
-	.enable_ahb_md_endian_swap	= DT_INST_PROP(port, ahb_md_endian_swap)\
+	.enable_ahb_md_endian_swap	= DT_INST_PROP(port, ahb_md_endian_swap),\
+	.test_local_loopback	= DT_INST_PROP(port, test_local_loopback),\
 };
 
 /* Device run-time data declaration macro */
@@ -747,6 +748,9 @@ struct eth_xlnx_gem_dev_cfg {
 	bool				tx_buffer_size_full : 1;
 	bool				enable_ahb_packet_endian_swap : 1;
 	bool				enable_ahb_md_endian_swap : 1;
+
+	/* testing support */
+	bool				test_local_loopback : 1;
 };
 
 /**
