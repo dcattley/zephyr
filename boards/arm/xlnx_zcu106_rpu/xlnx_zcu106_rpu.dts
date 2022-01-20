@@ -1,0 +1,51 @@
+/*
+ * Copyright (c) 2020, Antmicro
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/dts-v1/;
+#include <arm/xilinx/zynqmp_rpu.dtsi>
+
+/ {
+	model = "Xilinx ZCU106 (RPU)";
+	compatible = "xlnx,zynqmp";
+
+	chosen {
+		zephyr,flash      = &flash0;
+		zephyr,sram       = &sram0;
+		zephyr,console    = &uart0;
+		zephyr,shell-uart = &uart0;
+		zephyr,ocm        = &ocm;
+	};
+
+	soc {
+		ocm: memory@fffc0000 {
+			compatible = "zephyr,memory-region", "xlnx,zynq-ocm";
+			reg = <0xFFFC0000 DT_SIZE_K(256)>;
+			zephyr,memory-region = "OCM";
+		};
+	};
+};
+
+&uart0 {
+	status = "okay";
+	current-speed = <115200>;
+	clock-frequency = <99990005>;
+};
+
+&ttc0 {
+	status = "okay";
+	clock-frequency = <100000000>;
+};
+ 
+&gem3 {
+	status = "okay";
+	clock-frequency = <1500000000>;
+	link-speed = <XLNX_GEM_LINK_SPEED_1GBIT>;
+	amba-ahb-dbus-width = <XLNX_GEM_AMBA_AHB_DBUS_WIDTH_64BIT>;
+	mdc-divider = <XLNX_GEM_MDC_DIVIDER_224>;
+	local-mac-address = [00 0A 35 00 01 02];
+	/* init-mdio-phy; */
+	advertise-lower-link-speeds;
+ };
