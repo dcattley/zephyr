@@ -15,11 +15,21 @@
 		zephyr,flash      = &flash0;
 		zephyr,sram       = &sram0;
 		zephyr,console    = &uart0;
-		zephyr,shell-uart = &uart0;
+		zephyr,shell-uart = &uart1;
 		zephyr,ocm        = &ocm;
 	};
 
 	soc {
+		uart1: uart@ff010000 {
+			compatible = "xlnx,xuartps";
+			reg = <0xff010000 0x4c>;
+			status = "disabled";
+			interrupts = <GIC_SPI 22 IRQ_TYPE_LEVEL
+					IRQ_DEFAULT_PRIORITY>;
+			interrupt-names = "irq_0";
+			label = "UART_1";
+		};
+
 		ocm: memory@fffc0000 {
 			compatible = "zephyr,memory-region", "xlnx,zynq-ocm";
 			reg = <0xFFFC0000 DT_SIZE_K(256)>;
@@ -29,6 +39,12 @@
 };
 
 &uart0 {
+	status = "okay";
+	current-speed = <115200>;
+	clock-frequency = <99990005>;
+};
+
+&uart1 {
 	status = "okay";
 	current-speed = <115200>;
 	clock-frequency = <99990005>;
